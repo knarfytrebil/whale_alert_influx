@@ -1,0 +1,89 @@
+{
+  "channel_id": "xlLZ7tJq",
+  "timestamp": 1687389431,
+  "blockchain": "ethereum",
+  "transaction_type": "transfer",
+  "from": "unknown wallet",
+  "to": "unknown wallet",
+  "amounts": [
+    {
+      "symbol": "USDC",
+      "amount": 20006425.310176,
+      "value_usd": 20008425.95270702
+    },
+    {
+      "symbol": "WETH",
+      "amount": 5122.118861012107,
+      "value_usd": 9702266.325340524
+    }
+  ],
+  "text": "20,006,425 USDC (20,008,425 USD) and 5,122 WETH (9,702,266 USD) transferred from unknown wallet to unknown wallet. Blockchain: ethereum. Transaction hash: 0x60b2f4ac1d2a1308aa04c82d70c388404c92c1d3474c13ca29188ada1edad9dc",
+  "transaction": {
+    "height": 17531252,
+    "index_in_block": 8,
+    "timestamp": 1687389431,
+    "hash": "0x60b2f4ac1d2a1308aa04c82d70c388404c92c1d3474c13ca29188ada1edad9dc",
+    "fee": "0.004094476112033575",
+    "fee_symbol": "ETH",
+    "fee_symbol_price": 1896.3385891487344,
+    "sub_transactions": [
+      {
+        "symbol": "ETH",
+        "unit_price_usd": 1896.3385891487344,
+        "transaction_type": "transfer",
+        "inputs": [
+          {
+            "amount": "0.004094476112078375",
+            "address": "0x0cac3d1a887206e0f6169222c4504301a8b4b993",
+            "balance": "50.076697315223177111"
+          }
+        ],
+        "outputs": [
+          {
+            "amount": "0.0000000000000448",
+            "address": "0xa69babef1ca67a37ffaf7a485dfff3382056e78c",
+            "balance": "98.022538180146464781"
+          }
+        ]
+      },
+      {
+        "symbol": "USDC",
+        "unit_price_usd": 1.0001,
+        "transaction_type": "transfer",
+        "inputs": [
+          {
+            "amount": "20006425.310176",
+            "address": "0xa69babef1ca67a37ffaf7a485dfff3382056e78c",
+            "balance": "0.000001"
+          }
+        ],
+        "outputs": [
+          {
+            "amount": "20006425.310176",
+            "address": "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640",
+            "balance": "137582557.825184"
+          }
+        ]
+      },
+      {
+        "symbol": "WETH",
+        "unit_price_usd": 1894.19,
+        "transaction_type": "transfer",
+        "inputs": [
+          {
+            "amount": "5122.118861012106882592",
+            "address": "0xa69babef1ca67a37ffaf7a485dfff3382056e78c",
+            "balance": "8183.586571433944346458"
+          }
+        ],
+        "outputs": [
+          {
+            "amount": "5122.118861012106882592",
+            "address": "0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640",
+            "balance": "60731.388902993727955153"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,2 +1,4 @@
 asyncio==3.4.3
 websockets==15.0.1
+influxdb-client==1.41.0
+python-dotenv==1.0.0
