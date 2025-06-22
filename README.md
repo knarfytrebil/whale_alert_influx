@@ -88,3 +88,142 @@ Transaction data is stored in InfluxDB2 with:
 
 ⏭️  Filtered out: unknown wallet → unknown wallet
 ```
+
+## Querying InfluxDB2
+
+### Query Methods
+
+#### 1. InfluxDB2 Web UI
+- Go to `http://localhost:8086` in your browser
+- Navigate to **Data Explorer** or **Notebooks**
+- Use the visual query builder or write Flux queries directly
+
+#### 2. Command Line (influx CLI)
+```bash
+# Install InfluxDB CLI
+# On macOS: brew install influxdb-cli
+# On Linux: wget https://dl.influxdata.com/influxdb/releases/influxdb2-client-linux-amd64.tar.gz
+
+# Query with CLI
+influx query 'from(bucket:"whale_alerts") |> range(start: -1h)' \
+  --host http://localhost:8086 \
+  --token YOUR_TOKEN \
+  --org YOUR_ORG
+```
+
+#### 3. Python Client
+```python
+from influxdb_client import InfluxDBClient
+
+client = InfluxDBClient(url="http://localhost:8086", token="YOUR_TOKEN", org="YOUR_ORG")
+query_api = client.query_api()
+
+query = '''
+from(bucket: "whale_alerts")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+'''
+
+result = query_api.query(query)
+for table in result:
+    for record in table.records:
+        print(record)
+```
+
+### Common Flux Queries
+
+#### All Transactions in Last Hour
+```flux
+from(bucket: "whale_alerts")
+  |> range(start: -1h)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+```
+
+#### Transactions Above $1M
+```flux
+from(bucket: "whale_alerts")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+  |> filter(fn: (r) => r["_field"] == "value_usd")
+  |> filter(fn: (r) => r["_value"] > 1000000.0)
+```
+
+#### Binance Transactions Only
+```flux
+from(bucket: "whale_alerts")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+  |> filter(fn: (r) => r["to"] == "Binance")
+```
+
+#### Group by Exchange (Sum Volume)
+```flux
+from(bucket: "whale_alerts")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+  |> filter(fn: (r) => r["_field"] == "value_usd")
+  |> group(columns: ["to"])
+  |> sum()
+```
+
+#### Count Transactions per Hour
+```flux
+from(bucket: "whale_alerts")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+  |> filter(fn: (r) => r["_field"] == "value_usd")
+  |> aggregateWindow(every: 1h, fn: count)
+```
+
+#### Latest 10 Transactions
+```flux
+from(bucket: "whale_alerts")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+  |> sort(columns: ["_time"], desc: true)
+  |> limit(n: 10)
+```
+
+## Grafana Integration
+
+### Add InfluxDB2 Data Source
+1. In Grafana, go to **Configuration** → **Data Sources**
+2. Click **Add data source** → **InfluxDB**
+3. Configure:
+   - **Query Language**: Flux
+   - **URL**: `http://localhost:8086`
+   - **Organization**: Your InfluxDB org
+   - **Token**: Your InfluxDB token
+   - **Default Bucket**: `whale_alerts`
+
+### Recommended Dashboard Panels
+
+#### Transaction Volume Over Time
+```flux
+from(bucket: "whale_alerts")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+  |> filter(fn: (r) => r["_field"] == "value_usd")
+  |> aggregateWindow(every: 1h, fn: sum, createEmpty: false)
+```
+
+#### Top Exchanges by Volume
+```flux
+from(bucket: "whale_alerts")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+  |> filter(fn: (r) => r["_field"] == "value_usd")
+  |> group(columns: ["to"])
+  |> sum()
+  |> sort(columns: ["_value"], desc: true)
+```
+
+#### Transaction Count by Blockchain
+```flux
+from(bucket: "whale_alerts")
+  |> range(start: v.timeRangeStart, stop: v.timeRangeStop)
+  |> filter(fn: (r) => r["_measurement"] == "whale_transactions")
+  |> filter(fn: (r) => r["_field"] == "value_usd")
+  |> group(columns: ["blockchain"])
+  |> count()
+```
