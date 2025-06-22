@@ -27,6 +27,7 @@ KNOWN_EXCHANGES = [
     "Kraken",
     "Bitfinex",
     "OKX",
+    "BitGet",
     "Bybit",
     "KuCoin",
     "Huobi",
