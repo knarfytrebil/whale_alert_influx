@@ -36,7 +36,7 @@ KNOWN_USDT_EXCHANGES = [
     "Huobi",
     "Gate.io",
     "Upbit",
-    "Cryptocom",
+    "CryptoCom",
     "MatrixPort",
     "GateIO",
     "Coinone",
@@ -44,10 +44,7 @@ KNOWN_USDT_EXCHANGES = [
     "ChangeNow",
 ]
 
-KNOWN_FIAT_EXCHANGES = [
-    "Kraken",
-    "Coinbase",
-]
+KNOWN_FIAT_EXCHANGES = ["Kraken", "Coinbase", "Bitvavo"]
 
 KNOWN_MMS = [
     "Galaxy Digital",
@@ -61,22 +58,22 @@ KNOWN_MMS = [
 def get_entity_type(wallet):
     """Determine the entity type of a wallet"""
     wallet_lower = wallet.lower()
-    
+
     for exchange in KNOWN_USDT_EXCHANGES:
         if exchange.lower() in wallet_lower:
             return "usdt_exchange"
-    
+
     for exchange in KNOWN_FIAT_EXCHANGES:
         if exchange.lower() in wallet_lower:
             return "fiat_exchange"
-    
+
     for mm in KNOWN_MMS:
         if mm.lower() in wallet_lower:
             return "market_maker"
-    
+
     if wallet_lower == "unknown wallet":
         return "unknown"
-    
+
     return "other"
 
 
@@ -84,17 +81,20 @@ def is_relevant_transaction(from_wallet, to_wallet):
     """Check if transaction involves known entities"""
     from_type = get_entity_type(from_wallet)
     to_type = get_entity_type(to_wallet)
-    
+
     # Only process transactions involving our tracked entity types
-    return from_type in ["usdt_exchange", "fiat_exchange", "market_maker"] or \
-           to_type in ["usdt_exchange", "fiat_exchange", "market_maker"]
+    return from_type in [
+        "usdt_exchange",
+        "fiat_exchange",
+        "market_maker",
+    ] or to_type in ["usdt_exchange", "fiat_exchange", "market_maker"]
 
 
 def get_flow_direction(from_wallet, to_wallet):
     """Determine the money flow direction between entity types"""
     from_type = get_entity_type(from_wallet)
     to_type = get_entity_type(to_wallet)
-    
+
     # Create flow direction string
     if from_type == "unknown" and to_type != "unknown":
         return f"inflow_to_{to_type}"
@@ -125,7 +125,7 @@ async def send_to_influxdb(transaction_data):
                 flow_direction = get_flow_direction(from_wallet, to_wallet)
 
                 points = []
-                
+
                 # Create flow analysis points for each amount
                 for amount_data in transaction_data["amounts"]:
                     # Main transaction record
@@ -141,11 +141,13 @@ async def send_to_influxdb(transaction_data):
                         .tag("transaction_type", transaction_data["transaction_type"])
                         .field("amount", float(amount_data["amount"]))
                         .field("value_usd", float(amount_data["value_usd"]))
-                        .field("transaction_hash", transaction_data["transaction"]["hash"])
+                        .field(
+                            "transaction_hash", transaction_data["transaction"]["hash"]
+                        )
                         .time(datetime.fromtimestamp(transaction_data["timestamp"]))
                     )
                     points.append(point)
-                    
+
                     # Aggregated flow metrics by direction
                     flow_metric = (
                         Point("flow_metrics")
@@ -168,10 +170,16 @@ async def send_to_influxdb(transaction_data):
 
         from_type = get_entity_type(transaction_data["from"])
         to_type = get_entity_type(transaction_data["to"])
-        flow_direction = get_flow_direction(transaction_data["from"], transaction_data["to"])
-        
-        total_value = sum(float(amt["value_usd"]) for amt in transaction_data["amounts"])
-        print(f"✓ Flow recorded: {flow_direction} | ${total_value:,.2f} | {points_written} points")
+        flow_direction = get_flow_direction(
+            transaction_data["from"], transaction_data["to"]
+        )
+
+        total_value = sum(
+            float(amt["value_usd"]) for amt in transaction_data["amounts"]
+        )
+        print(
+            f"✓ Flow recorded: {flow_direction} | ${total_value:,.2f} | {points_written} points"
+        )
 
     except Exception as e:
         print(f"✗ Error sending to InfluxDB: {e}")
@@ -220,7 +228,7 @@ async def connect():
                             from_type = get_entity_type(from_wallet)
                             to_type = get_entity_type(to_wallet)
                             flow_direction = get_flow_direction(from_wallet, to_wallet)
-                            
+
                             print(f"💰 Flow detected: {flow_direction}")
                             print(f"   From: {from_wallet} ({from_type})")
                             print(f"   To: {to_wallet} ({to_type})")
@@ -230,9 +238,12 @@ async def connect():
                             await send_to_influxdb(data)
                         else:
                             # Check if 'to' wallet is a potential new entity to track
-                            all_known = (KNOWN_USDT_EXCHANGES + KNOWN_FIAT_EXCHANGES + KNOWN_MMS)
+                            all_known = (
+                                KNOWN_USDT_EXCHANGES + KNOWN_FIAT_EXCHANGES + KNOWN_MMS
+                            )
                             if to_wallet.lower() != "unknown wallet" and not any(
-                                entity.lower() in to_wallet.lower() for entity in all_known
+                                entity.lower() in to_wallet.lower()
+                                for entity in all_known
                             ):
                                 print(f"🔍 Potential new entity detected:")
                                 print(f"   TO: {to_wallet}")
