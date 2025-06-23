@@ -16,6 +16,13 @@ INFLUXDB_TOKEN = os.environ["INFLUXDB_TOKEN"]
 INFLUXDB_ORG = os.environ["INFLUXDB_ORG"]
 INFLUXDB_BUCKET = os.environ["INFLUXDB_BUCKET"]
 
+# Whale Alert subscription configuration
+BLOCKCHAINS = os.environ.get("WHALE_ALERT_BLOCKCHAINS", "bitcoin,ethereum,tron").split(
+    ","
+)
+SYMBOLS = os.environ.get("WHALE_ALERT_SYMBOLS", "BTC,USDT").split(",")
+MIN_VALUE_USD = int(os.environ.get("WHALE_ALERT_MIN_VALUE_USD", "100000"))
+
 # Known exchanges to filter for
 KNOWN_EXCHANGES = [
     "Binance",
@@ -33,6 +40,12 @@ KNOWN_EXCHANGES = [
     "Huobi",
     "Gate.io",
     "Crypto.com",
+    "Copper",
+    "MatrixPort",
+    "GateIO",
+    "Coinone",
+    "HitBTC",
+    "ChangeNow",
 ]
 
 
@@ -47,33 +60,50 @@ def is_exchange_transaction(from_wallet, to_wallet):
     return False
 
 
-def send_to_influxdb(transaction_data):
+async def send_to_influxdb(transaction_data):
     """Send transaction data to InfluxDB2"""
     try:
-        with InfluxDBClient(
-            url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
-        ) as client:
-            write_api = client.write_api(write_options=SYNCHRONOUS)
+        # Run the synchronous InfluxDB operation in a thread pool
+        import asyncio
 
-            # Create point for each amount in the transaction
-            for amount_data in transaction_data["amounts"]:
-                point = (
-                    Point("whale_transactions")
-                    .tag("blockchain", transaction_data["blockchain"])
-                    .tag("symbol", amount_data["symbol"])
-                    .tag("from", transaction_data["from"])
-                    .tag("to", transaction_data["to"])
-                    .tag("transaction_type", transaction_data["transaction_type"])
-                    .field("amount", float(amount_data["amount"]))
-                    .field("value_usd", float(amount_data["value_usd"]))
-                    .field("transaction_hash", transaction_data["transaction"]["hash"])
-                    .time(datetime.fromtimestamp(transaction_data["timestamp"]))
-                )
+        def _write_sync():
+            with InfluxDBClient(
+                url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
+            ) as client:
+                write_api = client.write_api(write_options=SYNCHRONOUS)
 
-                write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=point)
+                # Create point for each amount in the transaction
+                points = []
+                for amount_data in transaction_data["amounts"]:
+                    point = (
+                        Point("whale_transactions")
+                        .tag("blockchain", transaction_data["blockchain"])
+                        .tag("symbol", amount_data["symbol"])
+                        .tag("from", transaction_data["from"])
+                        .tag("to", transaction_data["to"])
+                        .tag("transaction_type", transaction_data["transaction_type"])
+                        .field("amount", float(amount_data["amount"]))
+                        .field("value_usd", float(amount_data["value_usd"]))
+                        .field(
+                            "transaction_hash", transaction_data["transaction"]["hash"]
+                        )
+                        .time(datetime.fromtimestamp(transaction_data["timestamp"]))
+                    )
+                    points.append(point)
 
+                # Write all points at once
+                write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=points)
+                return len(points)
+
+        # Execute the synchronous operation in a thread pool
+        loop = asyncio.get_event_loop()
+        points_written = await loop.run_in_executor(None, _write_sync)
+
+        total_value = sum(
+            float(amt["value_usd"]) for amt in transaction_data["amounts"]
+        )
         print(
-            f"✓ Sent to InfluxDB: {amount_data['symbol']} ${amount_data['value_usd']:,.2f}"
+            f"✓ Sent to InfluxDB: {points_written} points, total value ${total_value:,.2f}"
         )
 
     except Exception as e:
@@ -87,9 +117,9 @@ async def connect():
     # The subscription message
     subscription_msg = {
         "type": "subscribe_alerts",
-        "blockchains": ["bitcoin", "ethereum", "tron"],
-        "symbols": ["BTC", "USDT"],
-        "min_value_usd": 100000,
+        "blockchains": BLOCKCHAINS,
+        "symbols": SYMBOLS,
+        "min_value_usd": MIN_VALUE_USD,
     }
 
     # Connect to the WebSocket server
@@ -126,7 +156,7 @@ async def connect():
                             print(f"   Blockchain: {data['blockchain']}")
 
                             # Send to InfluxDB
-                            send_to_influxdb(data)
+                            await send_to_influxdb(data)
                         else:
                             # Check if 'to' wallet is a potential new exchange
                             if to_wallet.lower() != "unknown wallet" and not any(
