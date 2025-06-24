@@ -300,17 +300,18 @@ def get_entity_type(wallet):
     """Determine the entity type of a wallet"""
     wallet_lower = wallet.lower()
 
+    # Use exact matching to avoid conflicts (e.g., "Coinbase" vs "Coinbase Institutional")
+    for mm in KNOWN_MMS:
+        if mm.lower() == wallet_lower:
+            return "market_maker"
+
     for exchange in KNOWN_USDT_EXCHANGES:
-        if exchange.lower() in wallet_lower:
+        if exchange.lower() == wallet_lower:
             return "usdt_exchange"
 
     for exchange in KNOWN_FIAT_EXCHANGES:
-        if exchange.lower() in wallet_lower:
+        if exchange.lower() == wallet_lower:
             return "fiat_exchange"
-
-    for mm in KNOWN_MMS:
-        if mm.lower() in wallet_lower:
-            return "market_maker"
 
     if wallet_lower == "unknown wallet":
         return "unknown"
