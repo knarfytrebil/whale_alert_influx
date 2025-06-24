@@ -38,6 +38,7 @@ KNOWN_USDT_EXCHANGES = [
     "Upbit",
     "CryptoCom",
     "MatrixPort",
+    "EezyCash",
     "GateIO",
     "Coinone",
     "HitBTC",
@@ -47,6 +48,7 @@ KNOWN_USDT_EXCHANGES = [
 KNOWN_FIAT_EXCHANGES = ["Kraken", "Coinbase", "Bitvavo"]
 
 KNOWN_MMS = [
+    "Ceffu",
     "Galaxy Digital",
     "Copper",
     "FalconX",
