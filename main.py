@@ -347,8 +347,8 @@ def get_flow_direction(from_wallet, to_wallet):
         return "unknown_flow"
 
 
-async def send_to_influxdb(transaction_data, signals=None):
-    """Send meaningful flow data and market signals to InfluxDB2"""
+async def send_to_influxdb(transaction_data, signals=None, net_flows=None):
+    """Send meaningful flow data, market signals, and net flows to InfluxDB2"""
     try:
         # Run the synchronous InfluxDB operation in a thread pool
         import asyncio
@@ -402,6 +402,30 @@ async def send_to_influxdb(transaction_data, signals=None):
                         .time(datetime.fromtimestamp(transaction_data["timestamp"]))
                     )
                     points.append(flow_metric)
+
+                # Add real-time net flow data
+                if net_flows:
+                    timestamp = datetime.now()
+                    for entity_symbol, flows in net_flows.items():
+                        if '_' in entity_symbol:
+                            entity_type, symbol = entity_symbol.split('_', 1)
+                        else:
+                            continue  # Skip malformed keys
+                        net_flow_value = flows.get("inflow", 0) + flows.get("outflow", 0)  # outflow is negative
+                        
+                        # Only write net flows with significant activity
+                        if abs(net_flow_value) > 100000:  # $100k threshold for net flow recording
+                            net_flow_point = (
+                                Point("net_flows")
+                                .tag("entity_type", entity_type)
+                                .tag("symbol", symbol)
+                                .field("net_flow_usd", float(net_flow_value))
+                                .field("inflow_usd", float(flows.get("inflow", 0)))
+                                .field("outflow_usd", float(flows.get("outflow", 0)))
+                                .field("window_minutes", ROLLING_WINDOW_MINUTES)
+                                .time(timestamp)
+                            )
+                            points.append(net_flow_point)
 
                 # Add market signal points if any
                 if signals:
@@ -467,6 +491,37 @@ def format_signal_alert(signal: dict) -> str:
     return alert_msg
 
 
+async def write_periodic_net_flows(cache: TransactionCache):
+    """Periodically write net flow data to InfluxDB for continuous monitoring"""
+    while True:
+        try:
+            await asyncio.sleep(300)  # Write net flows every 5 minutes
+            
+            if cache.net_flows:
+                # Create a mock transaction data structure for the InfluxDB write
+                mock_transaction = {
+                    "from": "periodic_update",
+                    "to": "periodic_update", 
+                    "blockchain": "system",
+                    "timestamp": datetime.now().timestamp(),
+                    "amounts": [{"symbol": "SYSTEM", "amount": "0", "value_usd": "0"}],
+                    "transaction": {"hash": f"periodic_{int(datetime.now().timestamp())}"},
+                    "transaction_type": "periodic_update"
+                }
+                
+                # Write only net flows (no signals)
+                await send_to_influxdb(
+                    mock_transaction,
+                    None,  # No signals
+                    dict(cache.net_flows)  # Current net flows
+                )
+                
+                logger.info(f"📊 Periodic net flows written: {len(cache.net_flows)} entity-symbol pairs")
+                
+        except Exception as e:
+            logger.error(f"❌ Error in periodic net flow write: {e}")
+
+
 async def connect():
     """Main WebSocket connection with enhanced signal detection"""
     # Initialize signal detection components
@@ -475,6 +530,10 @@ async def connect():
     
     logger.info("🚀 Starting Whale Alert with Market Signal Detection")
     logger.info(f"📊 Configuration: Window={ROLLING_WINDOW_MINUTES}min, Threshold=${NET_FLOW_THRESHOLD_USD:,}, MM Threshold=${MM_TRANSFER_THRESHOLD_USD:,}")
+    
+    # Start periodic net flow writing task
+    periodic_task = asyncio.create_task(write_periodic_net_flows(transaction_cache))
+    logger.info("📈 Started periodic net flow monitoring (5-minute intervals)")
     
     # The WebSocket API URL with the API key included
     url = f"wss://leviathan.whale-alert.io/ws?api_key={WHALE_ALERT_KEY}"
@@ -540,8 +599,12 @@ async def connect():
                                         logger.warning(alert_msg)  # Use warning level for signal alerts
                                         print(alert_msg)  # Also print to console for immediate visibility
 
-                                    # Send to InfluxDB (including signals)
-                                    await send_to_influxdb(data, signals if signals else None)
+                                    # Send to InfluxDB (including signals and net flows)
+                                    await send_to_influxdb(
+                                        data, 
+                                        signals if signals else None,
+                                        dict(transaction_cache.net_flows) if transaction_cache.net_flows else None
+                                    )
                                     
                                 else:
                                     # Check if 'to' wallet is a potential new entity to track
@@ -593,6 +656,14 @@ async def connect():
                 await asyncio.sleep(10)
             else:
                 break
+    
+    # Cancel the periodic task when exiting
+    if not periodic_task.done():
+        periodic_task.cancel()
+        try:
+            await periodic_task
+        except asyncio.CancelledError:
+            logger.info("📈 Periodic net flow monitoring stopped")
 
 
 if __name__ == "__main__":
