@@ -1,0 +1,13 @@
+2025-06-24 11:17:45,639 - INFO - 🚀 Starting Whale Alert with Market Signal Detection
+2025-06-24 11:17:45,639 - INFO - 📊 Configuration: Window=60min, Threshold=$10,000,000, MM Threshold=$5,000,000
+2025-06-24 11:17:46,225 - INFO - 📡 Connected: {"type":"subscribed_alerts","id":"YC7R1Eqs","blockchains":["bitcoin","ethereum","tron"],"symbols":["btc","usdt"],"tx_types":["transfer","mint","burn","lock","unlock","freeze","unfreeze"],"min_value_usd":2500000}
+2025-06-24 11:18:18,002 - INFO - 💰 Flow detected: outflow_from_usdt_exchange
+2025-06-24 11:18:18,003 - INFO -    From: OKEX (usdt_exchange)
+2025-06-24 11:18:18,003 - INFO -    To: unknown wallet (unknown)
+2025-06-24 11:18:18,003 - INFO -    Blockchain: tron
+2025-06-24 11:18:18,057 - INFO - ✓ Flow recorded: outflow_from_usdt_exchange | $4,615,648.21 | 2 points
+2025-06-24 11:18:29,090 - INFO - 💰 Flow detected: inflow_to_usdt_exchange
+2025-06-24 11:18:29,090 - INFO -    From: unknown wallet (unknown)
+2025-06-24 11:18:29,090 - INFO -    To: OKEX (usdt_exchange)
+2025-06-24 11:18:29,090 - INFO -    Blockchain: ethereum
+2025-06-24 11:18:29,122 - INFO - ✓ Flow recorded: inflow_to_usdt_exchange | $3,528,857.48 | 2 points
