@@ -2,6 +2,7 @@ import os
 import asyncio
 import websockets
 import json
+import signal
 from datetime import datetime
 from influxdb_client import InfluxDBClient, Point
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -9,6 +10,18 @@ from dotenv import load_dotenv
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Global shutdown flag
+shutdown_event = asyncio.Event()
+
+def signal_handler(signum, frame):
+    """Handle shutdown signals gracefully"""
+    print(f"\n🛑 Received signal {signum}, initiating graceful shutdown...")
+    shutdown_event.set()
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 WHALE_ALERT_KEY = os.environ["WHALE_ALERT_KEY"]
 INFLUXDB_URL = os.environ.get("INFLUXDB_URL", "http://localhost:8086")
@@ -189,6 +202,11 @@ async def send_to_influxdb(transaction_data):
 
 
 async def connect():
+    """WebSocket connection with proper lifecycle management"""
+    print("🚀 Starting Whale Alert Monitor")
+    print(f"📊 Tracking: {SYMBOLS} on {BLOCKCHAINS}")
+    print(f"💰 Min Value: ${MIN_VALUE_USD:,}")
+    
     # The WebSocket API URL with the API key included
     url = f"wss://leviathan.whale-alert.io/ws?api_key={WHALE_ALERT_KEY}"
 
@@ -200,76 +218,158 @@ async def connect():
         "min_value_usd": MIN_VALUE_USD,
     }
 
-    # Connect to the WebSocket server
-    async with websockets.connect(url) as ws:
-        # Send the subscription message
-        await ws.send(json.dumps(subscription_msg))
+    retry_count = 0
+    max_retries = 5
+    
+    while retry_count < max_retries and not shutdown_event.is_set():
+        try:
+            print(f"🔌 Connecting to Whale Alert WebSocket... (attempt {retry_count + 1})")
+            
+            # Connect with ping settings for keepalive
+            async with websockets.connect(
+                url, 
+                ping_interval=30,  # Send ping every 30 seconds
+                ping_timeout=10,   # Wait 10 seconds for pong
+                close_timeout=10   # Wait 10 seconds when closing
+            ) as ws:
+                print("✅ WebSocket connected successfully")
+                
+                # Send the subscription message
+                await ws.send(json.dumps(subscription_msg))
+                print("📡 Subscription message sent")
 
-        # Wait for a response
-        response = await ws.recv()
+                # Wait for a response
+                response = await ws.recv()
+                print(f"📨 Subscription confirmed: {response}")
+                
+                # Reset retry count on successful connection
+                retry_count = 0
 
-        # Print the response
-        print(f"Received: {response}")
+                # Main message loop
+                while not shutdown_event.is_set():
+                    try:
+                        # Wait for a new message with timeout
+                        message = await asyncio.wait_for(ws.recv(), timeout=60.0)
 
-        # Continue to handle incoming messages
-        while True:
-            try:
-                # Wait for a new message
-                message = await asyncio.wait_for(ws.recv(), timeout=None)
+                        # Parse the JSON message
+                        try:
+                            data = json.loads(message)
 
-                # Parse the JSON message
-                try:
-                    data = json.loads(message)
+                            # Check if this is a transaction alert (not a subscription response)
+                            if "from" in data and "to" in data:
+                                from_wallet = data["from"]
+                                to_wallet = data["to"]
 
-                    # Check if this is a transaction alert (not a subscription response)
-                    if "from" in data and "to" in data:
-                        from_wallet = data["from"]
-                        to_wallet = data["to"]
+                                # Filter for relevant transactions involving tracked entities
+                                if is_relevant_transaction(from_wallet, to_wallet):
+                                    from_type = get_entity_type(from_wallet)
+                                    to_type = get_entity_type(to_wallet)
+                                    flow_direction = get_flow_direction(from_wallet, to_wallet)
 
-                        # Filter for relevant transactions involving tracked entities
-                        if is_relevant_transaction(from_wallet, to_wallet):
-                            from_type = get_entity_type(from_wallet)
-                            to_type = get_entity_type(to_wallet)
-                            flow_direction = get_flow_direction(from_wallet, to_wallet)
+                                    print(f"💰 Flow detected: {flow_direction}")
+                                    print(f"   From: {from_wallet} ({from_type})")
+                                    print(f"   To: {to_wallet} ({to_type})")
+                                    print(f"   Blockchain: {data['blockchain']}")
 
-                            print(f"💰 Flow detected: {flow_direction}")
-                            print(f"   From: {from_wallet} ({from_type})")
-                            print(f"   To: {to_wallet} ({to_type})")
-                            print(f"   Blockchain: {data['blockchain']}")
-
-                            # Send to InfluxDB
-                            await send_to_influxdb(data)
-                        else:
-                            # Check if 'to' wallet is a potential new entity to track
-                            all_known = (
-                                KNOWN_USDT_EXCHANGES + KNOWN_FIAT_EXCHANGES + KNOWN_MMS
-                            )
-                            if to_wallet.lower() != "unknown wallet" and not any(
-                                entity.lower() in to_wallet.lower()
-                                for entity in all_known
-                            ):
-                                print(f"🔍 Potential new entity detected:")
-                                print(f"   TO: {to_wallet}")
-                                print(f"   Blockchain: {data['blockchain']}")
-                                print(
-                                    f"   Value: ${sum(float(amt['value_usd']) for amt in data['amounts']):,.2f}"
-                                )
-                                print()
+                                    # Send to InfluxDB
+                                    await send_to_influxdb(data)
+                                else:
+                                    # Check if 'to' wallet is a potential new entity to track
+                                    all_known = (
+                                        KNOWN_USDT_EXCHANGES + KNOWN_FIAT_EXCHANGES + KNOWN_MMS
+                                    )
+                                    if to_wallet.lower() != "unknown wallet" and not any(
+                                        entity.lower() in to_wallet.lower()
+                                        for entity in all_known
+                                    ):
+                                        print(f"🔍 Potential new entity detected:")
+                                        print(f"   TO: {to_wallet}")
+                                        print(f"   Blockchain: {data['blockchain']}")
+                                        print(
+                                            f"   Value: ${sum(float(amt['value_usd']) for amt in data['amounts']):,.2f}"
+                                        )
+                                        print()
+                                    else:
+                                        print(f"⏭️  Filtered out: {from_wallet} → {to_wallet}")
                             else:
-                                print(f"⏭️  Filtered out: {from_wallet} → {to_wallet}")
-                    else:
-                        print(f"📩 Non-transaction message: {message}")
+                                print(f"📩 Non-transaction message received")
 
-                except json.JSONDecodeError:
-                    print(f"❌ Failed to parse JSON: {message}")
+                        except json.JSONDecodeError:
+                            print(f"❌ Failed to parse JSON: {message}")
 
-            except asyncio.TimeoutError:
-                print("Timeout error, closing connection")
-                break
-            except websockets.ConnectionClosed:
-                print("Connection closed")
-                break
+                    except asyncio.TimeoutError:
+                        # Send ping to keep connection alive
+                        print("⏰ Message timeout - sending ping to keep connection alive")
+                        try:
+                            await ws.ping()
+                            print("🏓 Ping sent successfully")
+                        except websockets.ConnectionClosed:
+                            print("❌ Connection closed during ping")
+                            break
+                        except Exception as e:
+                            print(f"❌ Error sending ping: {e}")
+                            break
+                    
+                    except websockets.ConnectionClosed:
+                        print("🔌 WebSocket connection closed by server")
+                        break
+                    
+                    except Exception as e:
+                        print(f"❌ Unexpected error in message loop: {e}")
+                        break
+
+                # Clean connection close
+                if not ws.closed:
+                    print("🔄 Closing WebSocket connection gracefully...")
+                    await ws.close()
+
+        except websockets.InvalidStatusCode as e:
+            retry_count += 1
+            wait_time = min(30, 5 * retry_count)  # Exponential backoff, max 30s
+            print(f"❌ WebSocket connection failed with status {e.status_code}")
+            if retry_count < max_retries and not shutdown_event.is_set():
+                print(f"⏳ Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+            
+        except (websockets.ConnectionClosed, ConnectionRefusedError, OSError) as e:
+            retry_count += 1
+            wait_time = min(30, 5 * retry_count)  # Exponential backoff, max 30s
+            print(f"❌ Connection failed: {e}")
+            if retry_count < max_retries and not shutdown_event.is_set():
+                print(f"⏳ Retrying in {wait_time} seconds...")
+                await asyncio.sleep(wait_time)
+                
+        except Exception as e:
+            retry_count += 1
+            print(f"💥 Unexpected error: {e}")
+            if retry_count < max_retries and not shutdown_event.is_set():
+                await asyncio.sleep(10)
+
+    if shutdown_event.is_set():
+        print("🛑 Shutdown requested - exiting gracefully")
+    else:
+        print("🚨 Max retries exceeded - giving up")
 
 
-# Run the connect function until it completes
-asyncio.run(connect())
+async def main():
+    """Main function with proper async lifecycle"""
+    try:
+        await connect()
+    except KeyboardInterrupt:
+        print("🛑 KeyboardInterrupt received")
+        shutdown_event.set()
+    except Exception as e:
+        print(f"💥 Application crashed: {e}")
+        shutdown_event.set()
+    finally:
+        print("🏁 Application shutdown complete")
+
+if __name__ == "__main__":
+    try:
+        # Run the main function
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n🛑 Interrupted by user")
+    except Exception as e:
+        print(f"💥 Fatal error: {e}")
+        raise
