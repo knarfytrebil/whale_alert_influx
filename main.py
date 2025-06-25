@@ -17,7 +17,13 @@ shutdown_event = asyncio.Event()
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
     print(f"\n🛑 Received signal {signum}, initiating graceful shutdown...")
-    shutdown_event.set()
+    # Get the current event loop and set the shutdown event
+    try:
+        loop = asyncio.get_event_loop()
+        loop.call_soon_threadsafe(shutdown_event.set)
+    except RuntimeError:
+        # Fallback if no event loop is running
+        shutdown_event.set()
 
 # Register signal handlers
 signal.signal(signal.SIGINT, signal_handler)
@@ -238,9 +244,13 @@ async def connect():
                 await ws.send(json.dumps(subscription_msg))
                 print("📡 Subscription message sent")
 
-                # Wait for a response
-                response = await ws.recv()
-                print(f"📨 Subscription confirmed: {response}")
+                # Wait for a response with timeout
+                try:
+                    response = await asyncio.wait_for(ws.recv(), timeout=10.0)
+                    print(f"📨 Subscription confirmed: {response}")
+                except asyncio.TimeoutError:
+                    print("⚠️ Subscription confirmation timeout")
+                    continue
                 
                 # Reset retry count on successful connection
                 retry_count = 0
@@ -248,8 +258,8 @@ async def connect():
                 # Main message loop
                 while not shutdown_event.is_set():
                     try:
-                        # Wait for a new message with timeout
-                        message = await asyncio.wait_for(ws.recv(), timeout=60.0)
+                        # Wait for a new message with shorter timeout for faster shutdown
+                        message = await asyncio.wait_for(ws.recv(), timeout=5.0)
 
                         # Parse the JSON message
                         try:
@@ -298,6 +308,11 @@ async def connect():
                             print(f"❌ Failed to parse JSON: {message}")
 
                     except asyncio.TimeoutError:
+                        # Check shutdown before sending ping
+                        if shutdown_event.is_set():
+                            print("🛑 Shutdown requested during timeout")
+                            break
+                        
                         # Send ping to keep connection alive
                         print("⏰ Message timeout - sending ping to keep connection alive")
                         try:
@@ -354,9 +369,29 @@ async def connect():
 async def main():
     """Main function with proper async lifecycle"""
     try:
-        await connect()
+        # Create a task that can be cancelled
+        connect_task = asyncio.create_task(connect())
+        
+        # Wait for either the task to complete or shutdown event
+        while not shutdown_event.is_set() and not connect_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(connect_task), timeout=0.1)
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                print(f"💥 Connection error: {e}")
+                break
+        
+        # Cancel the task if shutdown was requested
+        if not connect_task.done():
+            connect_task.cancel()
+            try:
+                await connect_task
+            except asyncio.CancelledError:
+                pass
+                
     except KeyboardInterrupt:
-        print("🛑 KeyboardInterrupt received")
+        print("🛑 KeyboardInterrupt received in main")
         shutdown_event.set()
     except Exception as e:
         print(f"💥 Application crashed: {e}")
