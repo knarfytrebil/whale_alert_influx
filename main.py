@@ -4,8 +4,8 @@ import websockets
 import json
 import signal
 from datetime import datetime
-from influxdb_client import InfluxDBClient, Point
-from influxdb_client.client.write_api import SYNCHRONOUS
+from influxdb_client import Point
+from influxdb_client.client.influxdb_client_async import InfluxDBClientAsync
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -131,70 +131,56 @@ def get_flow_direction(from_wallet, to_wallet):
 async def send_to_influxdb(transaction_data):
     """Send meaningful flow data to InfluxDB2"""
     try:
-        # Run the synchronous InfluxDB operation in a thread pool
-        import asyncio
+        async with InfluxDBClientAsync(
+            url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
+        ) as client:
+            write_api = client.write_api()
 
-        def _write_sync():
-            with InfluxDBClient(
-                url=INFLUXDB_URL, token=INFLUXDB_TOKEN, org=INFLUXDB_ORG
-            ) as client:
-                write_api = client.write_api(write_options=SYNCHRONOUS)
+            from_wallet = transaction_data["from"]
+            to_wallet = transaction_data["to"]
+            from_type = get_entity_type(from_wallet)
+            to_type = get_entity_type(to_wallet)
+            flow_direction = get_flow_direction(from_wallet, to_wallet)
 
-                from_wallet = transaction_data["from"]
-                to_wallet = transaction_data["to"]
-                from_type = get_entity_type(from_wallet)
-                to_type = get_entity_type(to_wallet)
-                flow_direction = get_flow_direction(from_wallet, to_wallet)
+            points = []
 
-                points = []
-
-                # Create flow analysis points for each amount
-                for amount_data in transaction_data["amounts"]:
-                    # Main transaction record
-                    point = (
-                        Point("whale_flows")
-                        .tag("blockchain", transaction_data["blockchain"])
-                        .tag("symbol", amount_data["symbol"])
-                        .tag("from_entity", from_wallet)
-                        .tag("to_entity", to_wallet)
-                        .tag("from_type", from_type)
-                        .tag("to_type", to_type)
-                        .tag("flow_direction", flow_direction)
-                        .tag("transaction_type", transaction_data["transaction_type"])
-                        .field("amount", float(amount_data["amount"]))
-                        .field("value_usd", float(amount_data["value_usd"]))
-                        .field(
-                            "transaction_hash", transaction_data["transaction"]["hash"]
-                        )
-                        .time(datetime.fromtimestamp(transaction_data["timestamp"]))
+            # Create flow analysis points for each amount
+            for amount_data in transaction_data["amounts"]:
+                # Main transaction record
+                point = (
+                    Point("whale_flows")
+                    .tag("blockchain", transaction_data["blockchain"])
+                    .tag("symbol", amount_data["symbol"])
+                    .tag("from_entity", from_wallet)
+                    .tag("to_entity", to_wallet)
+                    .tag("from_type", from_type)
+                    .tag("to_type", to_type)
+                    .tag("flow_direction", flow_direction)
+                    .tag("transaction_type", transaction_data["transaction_type"])
+                    .field("amount", float(amount_data["amount"]))
+                    .field("value_usd", float(amount_data["value_usd"]))
+                    .field(
+                        "transaction_hash", transaction_data["transaction"]["hash"]
                     )
-                    points.append(point)
+                    .time(datetime.fromtimestamp(transaction_data["timestamp"]))
+                )
+                points.append(point)
 
-                    # Aggregated flow metrics by direction
-                    flow_metric = (
-                        Point("flow_metrics")
-                        .tag("flow_direction", flow_direction)
-                        .tag("blockchain", transaction_data["blockchain"])
-                        .tag("symbol", amount_data["symbol"])
-                        .field("volume_usd", float(amount_data["value_usd"]))
-                        .field("transaction_count", 1)
-                        .time(datetime.fromtimestamp(transaction_data["timestamp"]))
-                    )
-                    points.append(flow_metric)
+                # Aggregated flow metrics by direction
+                flow_metric = (
+                    Point("flow_metrics")
+                    .tag("flow_direction", flow_direction)
+                    .tag("blockchain", transaction_data["blockchain"])
+                    .tag("symbol", amount_data["symbol"])
+                    .field("volume_usd", float(amount_data["value_usd"]))
+                    .field("transaction_count", 1)
+                    .time(datetime.fromtimestamp(transaction_data["timestamp"]))
+                )
+                points.append(flow_metric)
 
-                # Write all points at once
-                write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=points)
-                return len(points)
-
-        # Execute the synchronous operation in a thread pool
-        loop = asyncio.get_event_loop()
-        points_written = await loop.run_in_executor(None, _write_sync)
-
-        from_type = get_entity_type(transaction_data["from"])
-        to_type = get_entity_type(transaction_data["to"])
-        flow_direction = get_flow_direction(
-            transaction_data["from"], transaction_data["to"]
-        )
+            # Write all points at once
+            await write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=points)
+            points_written = len(points)
 
         total_value = sum(
             float(amt["value_usd"]) for amt in transaction_data["amounts"]
